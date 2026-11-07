@@ -34,7 +34,7 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var wallpaper: ImageView
     private lateinit var status: TextView
-    private var selectedCategory = "Избранное"
+    private var selectedCategory = "Все"
     private var city = "Stockholm"
     private val executor = Executors.newSingleThreadExecutor()
     private val apps = mutableListOf<AppEntry>()
@@ -107,7 +107,9 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        actions.addView(actionButton("Обои") { chooseWallpaper() })
+        val wallpaperButton = actionButton("Обои") { chooseWallpaper() }
+        firstFocusable = wallpaperButton
+        actions.addView(wallpaperButton)
         actions.addView(actionButton("Город") { editCity() })
         actions.addView(actionButton("Настройки") { showHelp() })
         content.addView(actions)
@@ -123,7 +125,7 @@ class MainActivity : Activity() {
 
         val categoryScroll = horizontalScroll()
         val categories = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf("Избранное", "Все", "ТВ и видео", "Музыка", "Система").forEach { category ->
+        listOf("Все", "Избранное", "ТВ и видео", "Музыка", "Система").forEach { category ->
             categories.addView(actionButton(category) {
                 selectedCategory = category
                 renderApps()
@@ -150,22 +152,57 @@ class MainActivity : Activity() {
         }
         content.addView(footer)
         setContentView(root)
+        root.isFocusableInTouchMode = true
+        root.post { (firstFocusable ?: appGrid.getChildAt(0) ?: root).requestFocus() }
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            val direction = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP
+                KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN
+                KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT
+                KeyEvent.KEYCODE_DPAD_RIGHT -> View.FOCUS_RIGHT
+                else -> null
+            }
+            if (direction != null) {
+                val current = currentFocus ?: firstFocusable
+                val next = current?.focusSearch(direction)
+                if (next != null && next !== current) {
+                    next.requestFocus()
+                    return true
+                }
+                if (current == null) {
+                    firstFocusable?.requestFocus()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private lateinit var appGrid: android.widget.GridLayout
+    private var firstFocusable: View? = null
 
     private fun loadApps() {
         apps.clear()
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val resolved = packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-        resolved.forEach { info ->
-            val pkg = info.activityInfo.packageName
-            if (pkg != packageName) {
-                apps.add(AppEntry(
-                    info.loadLabel(packageManager)?.toString() ?: pkg,
-                    pkg,
-                    info.loadIcon(packageManager)
-                ))
+        // Android TV apps may expose LEANBACK_LAUNCHER instead of LAUNCHER.
+        val intents = listOf(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+        )
+        val seen = linkedSetOf<String>()
+        intents.forEach { query ->
+            packageManager.queryIntentActivities(query, PackageManager.MATCH_ALL).forEach { info ->
+                val pkg = info.activityInfo.packageName
+                if (pkg != packageName && seen.add(pkg)) {
+                    apps.add(AppEntry(
+                        info.loadLabel(packageManager)?.toString() ?: pkg,
+                        pkg,
+                        info.loadIcon(packageManager)
+                    ))
+                }
             }
         }
         apps.sortBy { it.label.lowercase(Locale.getDefault()) }
@@ -259,6 +296,15 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             background = rounded(Color.argb(100, 68, 91, 130), dp(12))
             setPadding(dp(10), dp(2), dp(10), dp(2))
+            stateListAnimator = null
+            setOnFocusChangeListener { v, hasFocus ->
+                v.scaleX = if (hasFocus) 1.06f else 1f
+                v.scaleY = if (hasFocus) 1.06f else 1f
+                v.background = rounded(
+                    if (hasFocus) Color.rgb(37, 99, 235) else Color.argb(100, 68, 91, 130),
+                    dp(12)
+                )
+            }
             setOnClickListener { action() }
             val lp = LinearLayout.LayoutParams(-2, dp(44))
             lp.setMargins(0, 0, dp(8), 0)
